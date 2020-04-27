@@ -11,7 +11,7 @@ def print_list(l, title=None):
         print('none')
     else:
         for el in l:
-            print(f'# {el.number} {el.title}')
+            print(f'#{el.number} {el.title}')
     print('\n')
 
 
