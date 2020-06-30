@@ -3,9 +3,7 @@ from github import Github
 import datetime
 
 def print_list(l, title=None):
-    """From list of PullRequest of Issue objects,
-    print their number and title.
-    """
+    """Print number and title from list of PullRequest of Issue objects."""
     print(f'## {title}\n')
     if not l:
         print('none')
