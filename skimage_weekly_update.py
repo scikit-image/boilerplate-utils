@@ -23,13 +23,15 @@ def create_argument_parser():
     parser.add_argument('-t', '--token', help='The GitHub token to use.')
     parser.add_argument(
         '--before',
-        help='Grab pulls or issues before this date (exclusive).',
+        help='Grab pulls or issues before this date (exclusive). '
+             'Use YYYY-MM-DD format.',
         default=today,
         type=datetime.fromisoformat,
     )
     parser.add_argument(
         '--after',
-        help='Grab pulls or issues after this date (inclusive).',
+        help='Grab pulls or issues after this date (inclusive). '
+             'Use YYYY-MM-DD format.',
         default=today - timedelta(days=7),
         type=datetime.fromisoformat,
     )
