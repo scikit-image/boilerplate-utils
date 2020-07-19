@@ -1,11 +1,11 @@
 #!/usr/bin/env python
+import argparse
 from github import Github
-import datetime
+from datetime import datetime, timedelta
+
 
 def print_list(l, title=None):
-    """From list of PullRequest of Issue objects,
-    print their number and title.
-    """
+    """Print number and title from list of PullRequest of Issue objects."""
     print(f'## {title}\n')
     if not l:
         print('none')
@@ -15,7 +15,30 @@ def print_list(l, title=None):
     print('\n')
 
 
-def main(token, number_covered_days):
+def create_argument_parser():
+    today = datetime.fromisoformat(datetime.today().isoformat().split('T')[0])
+    parser = argparse.ArgumentParser(
+        description='Generate a weekly report for scikit-image repo activity',
+    )
+    parser.add_argument('-t', '--token', help='The GitHub token to use.')
+    parser.add_argument(
+        '--before',
+        help='Grab pulls or issues before this date (exclusive). '
+             'Use YYYY-MM-DD format.',
+        default=today,
+        type=datetime.fromisoformat,
+    )
+    parser.add_argument(
+        '--after',
+        help='Grab pulls or issues after this date (inclusive). '
+             'Use YYYY-MM-DD format.',
+        default=today - timedelta(days=7),
+        type=datetime.fromisoformat,
+    )
+    return parser
+
+
+def main():
     """
     token : str
         Github token.
@@ -23,14 +46,18 @@ def main(token, number_covered_days):
         Number of days to cover in the report.
     """
 
+    parser = create_argument_parser()
+    args = parser.parse_args()
     # Compute the starting time
-    now = datetime.datetime.now()
-    delta = datetime.timedelta(days=number_covered_days)
-    start = now - delta
+    now = args.before
+    start = args.after
 
-    print(f'# {start.year}/{start.month}/{start.day} - {now.year}/{now.month}/{now.day}')
+    print(
+        f'# {start.year}/{start.month}/{start.day} - '
+        f'{now.year}/{now.month}/{now.day}'
+    )
 
-    g = Github(token)
+    g = Github(args.token)
     repo = g.get_repo("scikit-image/scikit-image")
 
 
@@ -80,10 +107,7 @@ def main(token, number_covered_days):
 
 
 if __name__ == "__main__":
-    number_covered_days = 7
-    # Github token.
+    # Call with `-t GITHUBTOKEN`
     # Generate it on github website,
     # in the scope, select "Repo".
-    token = ""
-
-    main(token, number_covered_days)
+    main()
