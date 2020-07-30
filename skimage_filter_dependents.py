@@ -14,8 +14,8 @@ This script generates three lists of packages:
 icon in the web page).
 2.) One list that only retains packages with >= min_stars stars, but also
 includes a list of the GitHub "topics" associated with each package.
-3.) A third list that is based on filtering the second list. During filtering, a
-package is retained if either:
+3.) A third list that is based on filtering the second list. During filtering,
+a package is retained if either:
     a.) Any string from repo_name_terms is in the repository organization/name
     b.) A topic in the repo's topic lists matches a topic in topic_search_terms
 
@@ -57,8 +57,6 @@ min_stars = 5
 save_to_pickle = False
 # If True, will write the three lists to .csv files in the current directory
 save_to_csv = True
-
-
 
 # Search terms of interest in the repository organization/name.
 # (see description at top)
@@ -187,7 +185,8 @@ omit_list = [
 max_page_num = 100
 
 packages = True
-url = 'https://github.com/{}/network/dependents?dependent_type=PACKAGE'.format(repo_to_query)
+url = ('https://github.com/{}/network/dependents'
+       '?dependent_type=PACKAGE').format(repo_to_query)
 
 package_list = []
 ghost_list = []
@@ -204,8 +203,8 @@ for i in range(max_page_num):
         try:
             # find repository org/name
             name = "{}/{}".format(
-                t.find('a', {"data-repository-hovercards-enabled":""}).text,
-                t.find('a', {"data-hovercard-type":"repository"}).text
+                t.find('a', {"data-repository-hovercards-enabled": ""}).text,
+                t.find('a', {"data-hovercard-type": "repository"}).text
             )
         except AttributeError:
             # Ghost repositories will give None for the find() calls above.
@@ -234,7 +233,6 @@ for i in range(max_page_num):
 
         page_package_list.append((name, forks, stars))
 
-
     # append packages from the current page to the overall lists
     package_list = package_list + page_package_list
     ghost_list = ghost_list + page_ghost_list
@@ -251,7 +249,8 @@ for i in range(max_page_num):
     prev_len = new_len
 
     # find the URL for the "Next" page of packages
-    paginationContainers = soup.find("div", {"class":"paginate-container"}).find_all('a')
+    paginationContainers = soup.find(
+        "div", {"class": "paginate-container"}).find_all('a')
     url = None
     for paginationContainer in paginationContainers:
         # Make sure we are retrieving the "Next" page and not the "Previous"
@@ -263,7 +262,7 @@ for i in range(max_page_num):
 
 # sort by descending number of stars
 # This is the first list mentioned at the top.
-all_packages = sorted(package_list, key=lambda x:x[2], reverse=True)
+all_packages = sorted(package_list, key=lambda x: x[2], reverse=True)
 
 # Create the second list by retaining only those with >= min_stars
 # Note that in the package list, the tuple is:
