@@ -39,13 +39,6 @@ def create_argument_parser():
 
 
 def main():
-    """
-    token : str
-        Github token.
-    number_covered_days : int
-        Number of days to cover in the report.
-    """
-
     parser = create_argument_parser()
     args = parser.parse_args()
     # Compute the starting time
