@@ -1,7 +1,7 @@
 """
 At the time this script was created (July 2020), GitHub did not offer an
-official way to query the dependent packages through their API. So, we instead
-use a web-scraping approach via BeautifulSoup, patterned after a response
+official way to query dependent packages through their API. So, we went
+for a web-scraping approach using BeautifulSoup, patterned after a response
 in this stack-overflow thread:
 https://stackoverflow.com/questions/58734176/how-to-use-github-api-to-get-a-repositorys-dependents-information-in-github
 
@@ -12,12 +12,12 @@ This script generates three lists of packages:
 
 1.) One that has ALL dependents that are active repositories (i.e. no "Ghost"
 icon in the web page).
-2.) One list that only retains packages with >= min_stars stars, but also
+2.) Another one that only retains packages with >= min_stars stars, but also
 includes a list of the GitHub "topics" associated with each package.
 3.) A third list that is based on filtering the second list. During filtering,
 a package is retained if either:
     a.) Any string from repo_name_terms is in the repository organization/name
-    b.) A topic in the repo's topic lists matches a topic in topic_search_terms
+    b.) A topic in the repo's topic list matches a topic in topic_search_terms
 
 The three variables containing the lists described above are:
 
@@ -47,10 +47,10 @@ g = Github(token)
 # START OF USER-CONFIGURABLE OPTIONS
 # ----------------------------------
 
-# The repository we will query for it's dependents
+# The repository we will query (whose dependents we want to find)
 repo_to_query = "scikit-image/scikit-image"
 
-# Retrieve detailed topic lists only for the packages with >= min_stars stars.
+# Retrieve detailed topic lists only for packages with >= min_stars stars.
 min_stars = 5
 
 # If True, will write the three lists to .pickle files in the current directory
@@ -79,7 +79,7 @@ repo_name_terms = [
 
 # Search terms of interest in the repository's topics (see description at top).
 # This list was created to match bio-image applications by manually curating
-# topic names from the full list of packages.
+# topic names from the full list of dependent packages.
 topic_search_terms = [
     'airways',
     'anatomy',
