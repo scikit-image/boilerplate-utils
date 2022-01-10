@@ -93,7 +93,7 @@ def main():
     new_issues = [issue for issue in issues if in_date_range(issue.created_at)]
     new_issues = [issue for issue in new_issues
             if issue.number not in pr_numbers]
-    print_list(new_issues, 'new issues')
+    print_list(new_issues, 'New issues')
 
     new_comments = [issue for issue in issues
             if issue.created_at < start and in_date_range(issue.updated_at)
