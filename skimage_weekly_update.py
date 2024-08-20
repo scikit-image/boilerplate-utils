@@ -2,24 +2,68 @@
 
 """Print a weekly report for scikit-image repo activity in Markdown format."""
 
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "pygithub>=2.3",
+#   "tqdm",
+# ]
+# ///
+
 import sys
 import argparse
+import dataclasses
 from github import Github
 from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 
 
+def item_state_as_emoji(item):
+    state_to_emoji = {
+        "open_pr": "📖",
+        "unplanned_pr": "📕",
+        "merged_pr": "📕",
+        "open_issue": "📖",
+        "completed_issue": "📕",
+        "unplanned_issue": "📕",
+    }
+
+    if item.pull_request is not None:
+        pr = item.as_pull_request()
+        if pr.state == "closed" and pr.merged is True:
+            state = "merged_pr"
+        elif pr.state == "closed" and pr.merged is False:
+            state = "unplanned_pr"
+        elif pr.state == "open":
+            state = "open_pr"
+        else:
+            raise ValueError(f"pr with unexpected state {item!r}")
+    else:
+        if item.state == "closed" and item.state_reason == "completed":
+            state = "completed_issue"
+        elif item.state == "closed" and item.state_reason == "not_planned":
+            state = "unplanned_issue"
+        elif item.state == "open":
+            state = "open_issue"
+        else:
+            raise ValueError(f"pr with unexpected state {item!r}")
+
+    emoji = state_to_emoji.get(state, "❔")
+    return emoji
+
+
 def print_list(items, *, heading=None):
     """Print number and heading from list of issues or pull requests."""
-    print(f'### {heading}\n')
+    print(f"### {heading} ({len(items)})\n")
     if not items:
-        print('none')
+        print("none")
     else:
-        state_to_emoji = {'closed': '📕', 'open': '📖'}
-        for item in items:
-            emoji = state_to_emoji.get(item.state, '❔')
-            print(f'{emoji} [#{item.number}]({item.html_url}) {item.title}')
-    print('\n')
+        sorted_items = sorted(items, key=lambda x: x.number)
+        sorted_items = sorted(sorted_items, key=lambda x: x.state, reverse=True)
+        for item in sorted_items:
+            emoji = item_state_as_emoji(item)
+            print(f"{emoji} [#{item.number}]({item.html_url}) {item.title}")
+    print("\n")
 
 
 def parse_command_line():
@@ -30,19 +74,21 @@ def parse_command_line():
     def to_utc_datetime(s):
         return datetime.fromisoformat(s).astimezone(timezone.utc)
 
-    parser = argparse.ArgumentParser(description=__doc__,)
-    parser.add_argument('-t', '--token', help='Optional GitHub token to use.')
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+    )
+    parser.add_argument("-t", "--token", help="Optional GitHub token to use.")
     parser.add_argument(
-        '--before',
-        help='Grab pulls or issues before this date (exclusive). '
-             'Use ISO format. Defaults to now.',
+        "--before",
+        help="Grab pulls or issues before this date (exclusive). "
+        "Use ISO format. Defaults to now.",
         default=before,
         type=to_utc_datetime,
     )
     parser.add_argument(
-        '--after',
-        help='Grab pulls or issues after this date (inclusive). '
-             'Use ISO format. Defaults to 7 days before now',
+        "--after",
+        help="Grab pulls or issues after this date (inclusive). "
+        "Use ISO format. Defaults to 7 days before now",
         default=after,
         type=to_utc_datetime,
     )
@@ -50,87 +96,89 @@ def parse_command_line():
     return kwargs
 
 
-def fetch_categorized_issues_n_prs(repo, *, start, stop):
-    """Fetch issues and PRs in the given time frame and sort into categories.
+@dataclasses.dataclass(slots=True)
+class Categories:
+    """Collect categorized issues and pull requests."""
 
-    Parameters
-    ----------
-    repo : github.Repository
-    start, stop : datetime
-        Two datetimes defining the report window from  `start` (included) to `stop`
-        (excluded). Datetimes must be timezone aware.
+    new_issues: list = dataclasses.field(default_factory=list)
+    closed_issues: list = dataclasses.field(default_factory=list)
+    other_active_issues: list = dataclasses.field(default_factory=list)
+    new_prs: list = dataclasses.field(default_factory=list)
+    closed_prs: list = dataclasses.field(default_factory=list)
+    other_active_prs: list = dataclasses.field(default_factory=list)
 
-    Returns
-    -------
-    items : dict[str, list[github.Issue]]
-        GitHub issues (including PRs) in the report window, sorted into
-        categories.
-    """
-    issues_n_prs = repo.get_issues(
-        state='all',
-        sort="updated",
-        direction="asc",
-        since=start,
-    )
+    @property
+    def new_open_issues(self):
+        open_issues = [i for i in self.new_issues if i.state == "open"]
+        return open_issues
 
-    new_issues = []
-    updated_issues = []
-    closed_issues = []
+    @property
+    def new_open_prs(self):
+        open_prs = [p for p in self.new_prs if p.state == "open"]
+        return open_prs
 
-    new_prs = []
-    updated_prs = []
-    merged_prs = []
-    closed_prs = []
+    @classmethod
+    def from_report_range(cls, repo, *, start, stop) -> "Categories":
+        """Fetch issues and PRs in the given time frame and sort into categories.
 
-    def in_report_range(date):
-        if date is None:
-            return False
-        else:
-            return start <= date < stop
+        Parameters
+        ----------
+        repo : github.Repository
+        start, stop : datetime
+            Two datetimes defining the report window from  `start` (included) to `stop`
+            (excluded). Datetimes must be timezone aware.
 
-    for item in tqdm(
-        issues_n_prs,
-        desc="Fetching and sorting into categories (may break early)",
-        total=issues_n_prs.totalCount,
-        file=sys.stderr,
-    ):
-        if not in_report_range(item.updated_at):
-            # Assumes that items are sorted, and the first items starts within
-            # the valid range (see `since=start` above)
-            break
+        Returns
+        -------
+        items : dict[str, list[github.Issue]]
+            GitHub issues (including PRs) in the report window, sorted into
+            categories.
+        """
+        issues_n_prs = repo.get_issues(
+            state="all",
+            sort="updated",
+            direction="asc",
+            since=start,
+        )
+        categories = cls()
 
-        new_in_range = in_report_range(item.created_at)
-        closed_in_range = in_report_range(item.closed_at)
-        is_pr = item.pull_request is not None
-        merged_in_range = is_pr and in_report_range(item.as_pull_request().merged_at)
+        def in_report_range(date):
+            if date is None:
+                return False
+            else:
+                return start <= date < stop
 
-        if is_pr:
-            if merged_in_range:
-                merged_prs.append(item)
-            elif closed_in_range:
-                closed_prs.append(item)
-            if new_in_range:
-                new_prs.append(item)
-            if not closed_in_range and not new_in_range:
-                updated_prs.append(item)
+        for item in tqdm(
+            issues_n_prs,
+            desc="Fetching and sorting into categories (may break early)",
+            total=issues_n_prs.totalCount,
+            file=sys.stderr,
+        ):
+            if not in_report_range(item.updated_at):
+                # Assumes that items are sorted, and the first items starts within
+                # the valid range (see `since=start` above)
+                break
 
-        else:
-            if closed_in_range:
-                closed_issues.append(item)
-            if new_in_range:
-                new_issues.append(item)
-            if not closed_in_range and not new_in_range:
-                updated_issues.append(item)
+            new_in_range = in_report_range(item.created_at)
+            closed_in_range = in_report_range(item.closed_at) and item.state == "closed"
+            is_pr = item.pull_request is not None
 
-    return {
-        "New pull requests": new_prs,
-        "Updated pull requests (state unchanged)": updated_prs,
-        "Merged pull requests": merged_prs,
-        "Closed pull requests (not merged)": closed_prs,
-        "New issues": new_issues,
-        "Updated issues (state unchanged)": updated_issues,
-        "Closed issues": closed_issues,
-    }
+            if is_pr:
+                if new_in_range:
+                    categories.new_prs.append(item)
+                if closed_in_range:
+                    categories.closed_prs.append(item)
+                if not new_in_range and not closed_in_range:
+                    categories.other_active_prs.append(item)
+            else:
+                if new_in_range:
+                    categories.new_issues.append(item)
+                if closed_in_range:
+                    categories.closed_issues.append(item)
+                if not new_in_range and not closed_in_range:
+                    categories.other_active_issues.append(item)
+
+        return categories
 
 
 def main(*, before, after, token=None):
@@ -141,11 +189,24 @@ def main(*, before, after, token=None):
     g = Github(token)
     repo = g.get_repo("scikit-image/scikit-image")
 
-    categories = fetch_categorized_issues_n_prs(repo, start=after, stop=before)
+    categories = Categories.from_report_range(repo, start=after, stop=before)
 
-    print(f'## {after:%b %d} to {before:%b %d, %Y}\n')
-    for heading, items in categories.items():
+    print(f"## {after:%b %d} to {before:%b %d, %Y}\n")
+
+    for heading, items in {
+        "New open pull requests": categories.new_open_prs,
+        "Closed pull requests": categories.closed_prs,
+        "Other active pull requests": categories.other_active_prs,
+        "New open issues": categories.new_open_issues,
+        "Closed issues": categories.closed_issues,
+        "Other active issues": categories.other_active_issues,
+    }.items():
         print_list(items, heading=heading)
+
+    total_issue_diff = len(categories.new_issues) - len(categories.closed_issues)
+    total_pr_diff = len(categories.new_prs) - len(categories.closed_prs)
+    print(f"Open pull requests: {total_pr_diff:+}")
+    print(f"Open issues: {total_issue_diff:+}")
 
 
 if __name__ == "__main__":
