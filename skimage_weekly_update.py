@@ -18,40 +18,6 @@ from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 
 
-def item_state_as_emoji(item):
-    state_to_emoji = {
-        "open_pr": "📖",
-        "unplanned_pr": "📕",
-        "merged_pr": "📕",
-        "open_issue": "📖",
-        "completed_issue": "📕",
-        "unplanned_issue": "📕",
-    }
-
-    if item.pull_request is not None:
-        pr = item.as_pull_request()
-        if pr.state == "closed" and pr.merged is True:
-            state = "merged_pr"
-        elif pr.state == "closed" and pr.merged is False:
-            state = "unplanned_pr"
-        elif pr.state == "open":
-            state = "open_pr"
-        else:
-            raise ValueError(f"pr with unexpected state {item!r}")
-    else:
-        if item.state == "closed" and item.state_reason == "completed":
-            state = "completed_issue"
-        elif item.state == "closed" and item.state_reason == "not_planned":
-            state = "unplanned_issue"
-        elif item.state == "open":
-            state = "open_issue"
-        else:
-            raise ValueError(f"pr with unexpected state {item!r}")
-
-    emoji = state_to_emoji.get(state, "❔")
-    return emoji
-
-
 def print_list(items, *, heading=None):
     """Print number and heading from list of issues or pull requests."""
     print(f"### {heading} ({len(items)})\n")
@@ -61,8 +27,7 @@ def print_list(items, *, heading=None):
         sorted_items = sorted(items, key=lambda x: x.number)
         sorted_items = sorted(sorted_items, key=lambda x: x.state, reverse=True)
         for item in sorted_items:
-            emoji = item_state_as_emoji(item)
-            print(f"{emoji} [#{item.number}]({item.html_url}) {item.title}")
+            print(f"- [#{item.number}]({item.html_url}) {item.title}")
     print("\n")
 
 
