@@ -18,6 +18,15 @@ from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 
 
+def conversation_len(issue_or_pr):
+    """Count comments and review comments of an issue or pull request."""
+    count = issue_or_pr.comments
+    if issue_or_pr.pull_request is not None:
+        pr = issue_or_pr.as_pull_request()
+        count += pr.review_comments
+    return count
+
+
 def print_list(items, *, heading=None):
     """Print number and heading from list of issues or pull requests."""
     print(f"### {heading} ({len(items)})\n")
@@ -25,7 +34,7 @@ def print_list(items, *, heading=None):
         print("none")
     else:
         sorted_items = sorted(items, key=lambda x: x.number)
-        sorted_items = sorted(sorted_items, key=lambda x: x.state, reverse=True)
+        sorted_items = sorted(sorted_items, key=lambda x: conversation_len(x))
         for item in sorted_items:
             print(f"- [#{item.number}]({item.html_url}) {item.title}")
     print("\n")
@@ -65,22 +74,30 @@ def parse_command_line():
 class Categories:
     """Collect categorized issues and pull requests."""
 
-    new_issues: list = dataclasses.field(default_factory=list)
+    new_open_issues: list = dataclasses.field(default_factory=list)
     closed_issues: list = dataclasses.field(default_factory=list)
     other_active_issues: list = dataclasses.field(default_factory=list)
-    new_prs: list = dataclasses.field(default_factory=list)
+    new_open_prs: list = dataclasses.field(default_factory=list)
+    merged_prs: list = dataclasses.field(default_factory=list)
     closed_prs: list = dataclasses.field(default_factory=list)
     other_active_prs: list = dataclasses.field(default_factory=list)
 
     @property
-    def new_open_issues(self):
-        open_issues = [i for i in self.new_issues if i.state == "open"]
-        return open_issues
+    def all_active_prs(self):
+        items = (
+            self.new_open_prs
+            + self.merged_prs
+            + self.closed_prs
+            + self.other_active_prs
+        )
+        items = list(set(items))
+        return items
 
     @property
-    def new_open_prs(self):
-        open_prs = [p for p in self.new_prs if p.state == "open"]
-        return open_prs
+    def all_active_issues(self):
+        items = self.new_open_issues + self.closed_issues + self.other_active_issues
+        items = list(set(items))
+        return items
 
     @classmethod
     def from_report_range(cls, repo, *, start, stop) -> "Categories":
@@ -127,20 +144,24 @@ class Categories:
             new_in_range = in_report_range(item.created_at)
             closed_in_range = in_report_range(item.closed_at) and item.state == "closed"
             is_pr = item.pull_request is not None
+            is_merged_pr = item.as_pull_request().is_merged() if is_pr else False
 
             if is_pr:
-                if new_in_range:
-                    categories.new_prs.append(item)
                 if closed_in_range:
-                    categories.closed_prs.append(item)
-                if not new_in_range and not closed_in_range:
+                    if is_merged_pr:
+                        categories.merged_prs.append(item)
+                    else:
+                        categories.closed_prs.append(item)
+                elif new_in_range:
+                    categories.new_open_prs.append(item)
+                else:
                     categories.other_active_prs.append(item)
             else:
-                if new_in_range:
-                    categories.new_issues.append(item)
                 if closed_in_range:
                     categories.closed_issues.append(item)
-                if not new_in_range and not closed_in_range:
+                elif new_in_range:
+                    categories.new_open_issues.append(item)
+                else:
                     categories.other_active_issues.append(item)
 
         return categories
@@ -157,9 +178,11 @@ def main(*, before, after, token=None):
     categories = Categories.from_report_range(repo, start=after, stop=before)
 
     print(f"## {after:%b %d} to {before:%b %d, %Y}\n")
+    print(f"Generated on {datetime.now():%b %d, %Y}.\n")
 
     for heading, items in {
         "New open pull requests": categories.new_open_prs,
+        "Merged pull requests": categories.merged_prs,
         "Closed pull requests": categories.closed_prs,
         "Other active pull requests": categories.other_active_prs,
         "New open issues": categories.new_open_issues,
@@ -168,10 +191,18 @@ def main(*, before, after, token=None):
     }.items():
         print_list(items, heading=heading)
 
-    total_issue_diff = len(categories.new_issues) - len(categories.closed_issues)
-    total_pr_diff = len(categories.new_prs) - len(categories.closed_prs)
+    total_issue_diff = len(categories.new_open_issues) - len(categories.closed_issues)
+    total_pr_diff = (
+        len(categories.new_open_prs)
+        - len(categories.merged_prs)
+        - len(categories.closed_prs)
+    )
+    total_active = len(categories.all_active_prs) + len(categories.all_active_issues)
+
+    print("---\n")
     print(f"Open pull requests: {total_pr_diff:+}")
     print(f"Open issues: {total_issue_diff:+}")
+    print(f"Total active items: {total_active}")
 
 
 if __name__ == "__main__":
