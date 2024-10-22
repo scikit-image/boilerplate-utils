@@ -1,109 +1,210 @@
 #!/usr/bin/env python
+
+"""Print a weekly report for scikit-image repo activity in Markdown format."""
+
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "pygithub>=2.3",
+#   "tqdm",
+# ]
+# ///
+
+import sys
 import argparse
+import dataclasses
 from github import Github
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from tqdm import tqdm
 
 
-def print_list(l, title=None):
-    """Print number and title from list of PullRequest of Issue objects."""
-    print(f'## {title}\n')
-    if not l:
-        print('none')
+def conversation_len(issue_or_pr):
+    """Count comments and review comments of an issue or pull request."""
+    count = issue_or_pr.comments
+    if issue_or_pr.pull_request is not None:
+        pr = issue_or_pr.as_pull_request()
+        count += pr.review_comments
+    return count
+
+
+def print_list(items, *, heading=None):
+    """Print number and heading from list of issues or pull requests."""
+    print(f"### {heading} ({len(items)})\n")
+    if not items:
+        print("none")
     else:
-        for el in l:
-            print(f'#{el.number} {el.title}')
-    print('\n')
+        sorted_items = sorted(items, key=lambda x: x.number)
+        sorted_items = sorted(sorted_items, key=lambda x: conversation_len(x))
+        for item in sorted_items:
+            print(f"- [#{item.number}]({item.html_url}) {item.title}")
+    print("\n")
 
 
-def create_argument_parser():
-    today = datetime.fromisoformat(datetime.today().isoformat().split('T')[0])
+def parse_command_line():
+    """Define and parse command line options."""
+    before = datetime.now().astimezone(timezone.utc)
+    after = before - timedelta(days=7)
+
+    def to_utc_datetime(s):
+        return datetime.fromisoformat(s).astimezone(timezone.utc)
+
     parser = argparse.ArgumentParser(
-        description='Generate a weekly report for scikit-image repo activity',
+        description=__doc__,
     )
-    parser.add_argument('-t', '--token', help='The GitHub token to use.')
+    parser.add_argument("-t", "--token", help="Optional GitHub token to use.")
     parser.add_argument(
-        '--before',
-        help='Grab pulls or issues before this date (exclusive). '
-             'Use YYYY-MM-DD format.',
-        default=today,
-        type=datetime.fromisoformat,
+        "--before",
+        help="Grab pulls or issues before this date (exclusive). "
+        "Use ISO format. Defaults to now.",
+        default=before,
+        type=to_utc_datetime,
     )
     parser.add_argument(
-        '--after',
-        help='Grab pulls or issues after this date (inclusive). '
-             'Use YYYY-MM-DD format.',
-        default=today - timedelta(days=7),
-        type=datetime.fromisoformat,
+        "--after",
+        help="Grab pulls or issues after this date (inclusive). "
+        "Use ISO format. Defaults to 7 days before now",
+        default=after,
+        type=to_utc_datetime,
     )
-    return parser
+    kwargs = vars(parser.parse_args())
+    return kwargs
 
 
-def main():
-    parser = create_argument_parser()
-    args = parser.parse_args()
-    # Compute the starting time
-    now = args.before
-    start = args.after
+@dataclasses.dataclass(slots=True)
+class Categories:
+    """Collect categorized issues and pull requests."""
 
-    print(
-        f'# {start.year}/{start.month}/{start.day} - '
-        f'{now.year}/{now.month}/{now.day}'
-    )
+    new_open_issues: list = dataclasses.field(default_factory=list)
+    closed_issues: list = dataclasses.field(default_factory=list)
+    other_active_issues: list = dataclasses.field(default_factory=list)
+    new_open_prs: list = dataclasses.field(default_factory=list)
+    merged_prs: list = dataclasses.field(default_factory=list)
+    closed_prs: list = dataclasses.field(default_factory=list)
+    other_active_prs: list = dataclasses.field(default_factory=list)
 
-    g = Github(args.token)
+    @property
+    def all_active_prs(self):
+        items = (
+            self.new_open_prs
+            + self.merged_prs
+            + self.closed_prs
+            + self.other_active_prs
+        )
+        items = list(set(items))
+        return items
+
+    @property
+    def all_active_issues(self):
+        items = self.new_open_issues + self.closed_issues + self.other_active_issues
+        items = list(set(items))
+        return items
+
+    @classmethod
+    def from_report_range(cls, repo, *, start, stop) -> "Categories":
+        """Fetch issues and PRs in the given time frame and sort into categories.
+
+        Parameters
+        ----------
+        repo : github.Repository
+        start, stop : datetime
+            Two datetimes defining the report window from  `start` (included) to `stop`
+            (excluded). Datetimes must be timezone aware.
+
+        Returns
+        -------
+        items : dict[str, list[github.Issue]]
+            GitHub issues (including PRs) in the report window, sorted into
+            categories.
+        """
+        issues_n_prs = repo.get_issues(
+            state="all",
+            sort="updated",
+            direction="asc",
+            since=start,
+        )
+        categories = cls()
+
+        def in_report_range(date):
+            if date is None:
+                return False
+            else:
+                return start <= date < stop
+
+        for item in tqdm(
+            issues_n_prs,
+            desc="Fetching and sorting into categories (may break early)",
+            total=issues_n_prs.totalCount,
+            file=sys.stderr,
+        ):
+            if not in_report_range(item.updated_at):
+                # Assumes that items are sorted, and the first items starts within
+                # the valid range (see `since=start` above)
+                break
+
+            new_in_range = in_report_range(item.created_at)
+            closed_in_range = in_report_range(item.closed_at) and item.state == "closed"
+            is_pr = item.pull_request is not None
+            is_merged_pr = item.as_pull_request().is_merged() if is_pr else False
+
+            if is_pr:
+                if closed_in_range:
+                    if is_merged_pr:
+                        categories.merged_prs.append(item)
+                    else:
+                        categories.closed_prs.append(item)
+                elif new_in_range:
+                    categories.new_open_prs.append(item)
+                else:
+                    categories.other_active_prs.append(item)
+            else:
+                if closed_in_range:
+                    categories.closed_issues.append(item)
+                elif new_in_range:
+                    categories.new_open_issues.append(item)
+                else:
+                    categories.other_active_issues.append(item)
+
+        return categories
+
+
+def main(*, before, after, token=None):
+    """Execute script.
+
+    Keyword arguments are supplied by `parse_command_line()`.
+    """
+    g = Github(token)
     repo = g.get_repo("scikit-image/scikit-image")
 
+    categories = Categories.from_report_range(repo, start=after, stop=before)
 
-    # --------------------- Pull requests ------------------------------
-    pulls = repo.get_pulls(state='all')
-    # We need these numbers to distinguish prs from issues
-    pr_numbers = [p.number for p in pulls[:400]]
+    print(f"## {after:%b %d} to {before:%b %d, %Y}\n")
+    print(f"Generated on {datetime.now():%b %d, %Y}.\n")
 
-    def in_date_range(date):
-        return date >= start and date < now
+    for heading, items in {
+        "New open pull requests": categories.new_open_prs,
+        "Merged pull requests": categories.merged_prs,
+        "Closed pull requests": categories.closed_prs,
+        "Other active pull requests": categories.other_active_prs,
+        "New open issues": categories.new_open_issues,
+        "Closed issues": categories.closed_issues,
+        "Other active issues": categories.other_active_issues,
+    }.items():
+        print_list(items, heading=heading)
 
-    new_pulls = [pull for pull in pulls[:100] if in_date_range(pull.created_at)]
-    print_list(new_pulls, 'New pull requests open last week')
+    total_issue_diff = len(categories.new_open_issues) - len(categories.closed_issues)
+    total_pr_diff = (
+        len(categories.new_open_prs)
+        - len(categories.merged_prs)
+        - len(categories.closed_prs)
+    )
+    total_active = len(categories.all_active_prs) + len(categories.all_active_issues)
 
-    closed_prs = repo.get_pulls(state='closed')
-
-    closed_and_not_merged_prs = [p for p in closed_prs[:200]
-            if p.merged_at is None and in_date_range(p.closed_at)]
-    print_list(closed_and_not_merged_prs, 'Closed pull requests (not merged)')
-
-    merged_prs = [p for p in closed_prs[:200]
-            if p.merged_at and in_date_range(p.merged_at)]
-    print_list(merged_prs, 'Merged pull requests')
-
-    open_prs = repo.get_pulls(state='open')
-    updated_prs = [p for p in open_prs[:100]
-            if p.created_at <= start and p.updated_at and in_date_range(p.updated_at)]
-    print_list(updated_prs, 'Older pull requests with new comments or commits')
-
-    # ------------------ Issues -------------------------------------------
-    issues = repo.get_issues(since=start, state='all')
-
-    new_issues = [issue for issue in issues if in_date_range(issue.created_at)]
-    new_issues = [issue for issue in new_issues
-            if issue.number not in pr_numbers]
-    print_list(new_issues, 'New issues')
-
-    new_comments = [issue for issue in issues
-            if issue.created_at < start and in_date_range(issue.updated_at)
-            and issue.state == 'open']
-    existing_issues_with_new_comments = [el for el in new_comments
-            if el.number not in pr_numbers]
-    print_list(existing_issues_with_new_comments, 'Older issues updated last week')
-
-    closed_issues = [issue for issue in issues if issue.closed_at
-            and in_date_range(issue.closed_at)]
-    closed_issues = [issue for issue in closed_issues
-            if issue.number not in pr_numbers]
-    print_list(closed_issues, 'Closed issues')
+    print("---\n")
+    print(f"Open pull requests: {total_pr_diff:+}")
+    print(f"Open issues: {total_issue_diff:+}")
+    print(f"Total active items: {total_active}")
 
 
 if __name__ == "__main__":
-    # Call with `-t GITHUBTOKEN`
-    # Generate it on github website,
-    # in the scope, select "Repo".
-    main()
+    kwargs = parse_command_line()
+    main(**kwargs)
